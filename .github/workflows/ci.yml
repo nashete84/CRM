@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: crm_owner
+          POSTGRES_PASSWORD: crm_owner
+          POSTGRES_DB: crm
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U crm_owner -d crm"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_ADMIN_URL: postgres://crm_owner:crm_owner@localhost:5432/crm
+      DATABASE_URL: postgres://crm_app:crm_app@localhost:5432/crm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Create app role
+        run: psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f scripts/db-init.sql
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm db:migrate
+      - run: pnpm test
