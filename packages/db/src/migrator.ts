@@ -1,15 +1,11 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { FileMigrationProvider, type Kysely, type MigrationResultSet, Migrator } from "kysely";
-
-const migrationFolder = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../migrations");
+import { type Kysely, type MigrationResultSet, Migrator } from "kysely";
+import { migrations } from "../migrations/index.js";
 
 function migrator<DB>(db: Kysely<DB>): Migrator {
   return new Migrator({
     // Migrations are schema-level and independent of the typed table map.
     db: db as unknown as Kysely<unknown>,
-    provider: new FileMigrationProvider({ fs, path, migrationFolder }),
+    provider: { getMigrations: async () => migrations },
   });
 }
 

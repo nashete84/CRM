@@ -9,9 +9,32 @@ Built clean-room from public documentation. Design decisions and the alternative
 | Path | What it is |
 |---|---|
 | `apps/api` | Fastify HTTP API |
-| `packages/db` | Database connection, migrations (Kysely) |
+| `packages/db` | Database connection, migrations (Kysely), tenant isolation helpers, record IDs |
+| `packages/metadata` | Metadata engine: objects, fields, picklists, record types, describe |
 
-More packages arrive with their build steps: `metadata`, `sharing`, `soql`, then `apps/web`.
+More packages arrive with their build steps: `sharing`, `soql`, then `apps/web`.
+
+## Metadata engine
+
+Objects and fields are rows, not tables, so each org can define its own schema at runtime. API names, field types, limits and the describe format follow Salesforce, so a real org's schema maps 1:1.
+
+```ts
+import { withOrg } from "@crm/db";
+import { createObject, createField, describeObject } from "@crm/metadata";
+
+await withOrg(db, orgId, async (tx) => {
+  const ctx = { tx, orgId };
+  await createObject(ctx, { label: "Invoice", pluralLabel: "Invoices",
+    nameField: { label: "Invoice Number", type: "AutoNumber", displayFormat: "INV-{0000}" } });
+  await createField(ctx, "Invoice__c", { type: "Currency", label: "Total" });
+  await createField(ctx, "Invoice__c", { type: "Picklist", label: "Status",
+    values: ["Draft", { value: "Sent", isDefault: true }, "Paid"] });
+  await createField(ctx, "Invoice__c", { type: "Lookup", label: "Approver", referenceTo: "User" });
+  return describeObject(ctx, "Invoice__c"); // Salesforce DescribeSObjectResult shape
+});
+```
+
+Supported field types: Text, TextArea, LongTextArea, Email, Phone, Url, Number, Currency, Percent, Checkbox, Date, DateTime, Picklist, MultiselectPicklist, Lookup, MasterDetail, AutoNumber. Formula and Roll-Up Summary come with the formula engine. Errors are `MetadataError` with Salesforce-style codes (`DUPLICATE_DEVELOPER_NAME`, `LIMIT_EXCEEDED`, ...) and the input property they refer to.
 
 ## Run locally
 

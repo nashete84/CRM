@@ -17,6 +17,7 @@ export type OrgTable = {
   id: string;
   name: string;
   slug: string;
+  metadata_version: ColumnType<string, never, never>;
   created_at: Timestamp;
 };
 
@@ -71,7 +72,84 @@ export type UserSessionTable = {
   user_agent: string | null;
 };
 
+export type SharingModel = "Private" | "Read" | "ReadWrite" | "ControlledByParent";
+
+export type ObjectDefTable = {
+  id: string;
+  org_id: string;
+  api_name: string;
+  label: string;
+  plural_label: string;
+  description: string | null;
+  key_prefix: string;
+  is_custom: boolean;
+  storage: Generated<"record" | "platform">;
+  sharing_model: Generated<SharingModel>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+};
+
+export type FieldDefTable = {
+  id: string;
+  org_id: string;
+  object_id: string;
+  api_name: string;
+  label: string;
+  type: string;
+  is_custom: boolean;
+  is_name_field: Generated<boolean>;
+  required: Generated<boolean>;
+  is_unique: Generated<boolean>;
+  is_external_id: Generated<boolean>;
+  description: string | null;
+  help_text: string | null;
+  props: ColumnType<Record<string, unknown>, string | undefined, string>;
+  reference_to: string | null;
+  relationship_name: string | null;
+  relationship_label: string | null;
+  delete_constraint: "SetNull" | "Restrict" | "Cascade" | null;
+  seq: ColumnType<string, never, never>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+};
+
+export type PicklistValueTable = {
+  org_id: string;
+  field_id: string;
+  value: string;
+  label: string;
+  sort_order: number;
+  is_default: Generated<boolean>;
+  is_active: Generated<boolean>;
+};
+
+export type RecordTypeTable = {
+  id: string;
+  org_id: string;
+  object_id: string;
+  developer_name: string;
+  label: string;
+  description: string | null;
+  is_active: Generated<boolean>;
+  seq: ColumnType<string, never, never>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+};
+
+export type RecordTypePicklistValueTable = {
+  org_id: string;
+  record_type_id: string;
+  field_id: string;
+  value: string;
+  is_default: Generated<boolean>;
+};
+
 export type Database = {
+  object_def: ObjectDefTable;
+  field_def: FieldDefTable;
+  picklist_value: PicklistValueTable;
+  record_type: RecordTypeTable;
+  record_type_picklist_value: RecordTypePicklistValueTable;
   org: OrgTable;
   app_user: AppUserTable;
   local_credential: LocalCredentialTable;
@@ -127,3 +205,5 @@ export async function resolveSession(
 
 export { migrateToLatest, migrateDown } from "./migrator.js";
 export { KeyPrefix, isValidId, newId, normalizeId, to18 } from "./ids.js";
+export { PLATFORM_OBJECTS, type PlatformObject } from "./platform-objects.js";
+export { ensurePlatformObjects } from "./platform-seed.js";

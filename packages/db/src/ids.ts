@@ -20,6 +20,9 @@ export const KeyPrefix = {
   Org: "00D",
   User: "005",
   AuthProvider: "0SO",
+  ObjectDef: "01I",
+  FieldDef: "00N",
+  RecordType: "012",
 } as const;
 
 /** Appends the case-checksum suffix to a 15-character ID. */

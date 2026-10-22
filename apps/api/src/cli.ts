@@ -11,7 +11,14 @@
  *        --client-id <id> --secret-env ACME_ENTRA_SECRET [--email-linking]
  */
 import { parseArgs } from "node:util";
-import { KeyPrefix, createDb, newId, resolveOrgBySlug, withOrg } from "@crm/db";
+import {
+  KeyPrefix,
+  createDb,
+  ensurePlatformObjects,
+  newId,
+  resolveOrgBySlug,
+  withOrg,
+} from "@crm/db";
 import { hashPassword } from "./auth/password.js";
 
 const [command, ...rest] = process.argv.slice(2);
@@ -57,6 +64,8 @@ try {
           .insertInto("org")
           .values({ id, name: need("name"), slug: need("slug") })
           .execute();
+        // Built-in objects (User) so lookups and OwnerId can point at them.
+        await ensurePlatformObjects(tx, id);
         await tx
           .insertInto("app_user")
           .values({ id: userId, org_id: id, email: need("admin-email"), name: need("admin-name") })

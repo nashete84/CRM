@@ -115,3 +115,39 @@ Format: **Chose** / **Rejected (why)**. Newest at the bottom.
 
 ## D-022 · Error responses
 - **Chose:** Salesforce-style bodies `{ errorCode, message }` (`INVALID_SESSION_ID`, `INVALID_LOGIN`). Anything that would be a 5xx returns `UNKNOWN_EXCEPTION` with a generic message; the detail goes only to the log. Authorization headers and cookies are redacted from logs.
+
+## D-023 · Metadata engine scope (step 3)
+- **Chose:** 17 field types: Text, TextArea, LongTextArea, Email, Phone, Url, Number, Currency, Percent, Checkbox, Date, DateTime, Picklist, MultiselectPicklist, Lookup, MasterDetail, AutoNumber. Plus picklist values, record types with per-type picklist subsets, and a Salesforce-shaped describe.
+- **Deferred:** Formula and Roll-Up Summary (step 7, with the formula engine), so no expression is ever stored before something can validate it. Literal default values other than checkbox defaults also wait for step 7, where Salesforce treats defaults as formulas.
+- **Deferred:** HTTP endpoints that change metadata. Without permissions (step 5) any signed-in user could change the schema. The engine ships as a library; the describe API arrives in step 8, the Setup UI in step 9.
+
+## D-024 · Built-in User object
+- **Chose:** `object_def` has a `storage` column. User is a `platform` object: described like any other so lookups, OwnerId and CreatedById can point at it, but its rows stay in `app_user` and its fields map to columns. It's created for every org (CLI, and a backfill in migration 0003) and is read-only through the metadata API.
+- **Rejected:** Special-casing "User" as a lookup target string. Describe, SOQL (step 6) and sharing (step 5) would each need their own exception.
+
+## D-025 · Field settings in a validated JSONB column
+- **Chose:** Settings that apply to every type are real columns (required, unique, external ID, relationship target and rule). Type-specific ones (length, precision, scale, display format) go in `props`, validated by a strict Zod schema per type, so a misspelt setting is an error rather than silently ignored. Relationship columns carry database CHECKs that hold even if the app has a bug.
+- **Rejected:** One column per setting across all types (mostly-null columns and a migration for every new type).
+
+## D-026 · Salesforce rules and limits, enforced
+- **Chose:** Enterprise Edition limits (200 custom objects, 500 custom fields, 40 relationship fields, 2 master-detail fields, 3 master-detail levels, 25 external IDs, 1000 picklist values). Naming rules match Salesforce exactly, including case-insensitive uniqueness and no reserved custom names, so any real org's schema can be imported 1:1 (answer #7).
+- **Master-detail:** always required, cascade delete, can't point at itself or User, can't form a loop. Adding one sets the object's sharing to Controlled by Parent and removes OwnerId from describe; removing the last one restores Public Read/Write.
+- **Lookups:** a required lookup must use Restrict on parent delete.
+- **Type changes** are refused (delete and recreate), except an object's Name field switching between Text and Auto Number, as Salesforce allows.
+
+## D-027 · Identifiers and ordering
+- **Chose:** Key prefixes `01I` (object), `00N` (field) and `012` (record type). Custom objects get key prefixes `a00`, `a01`, ... per org. Records are ordered by an identity column (`seq`), not by timestamp, because everything created in one transaction shares the same `now()`.
+- **Chose:** The foreign key from a relationship field to its target object is `DEFERRABLE INITIALLY DEFERRED`. Deleting an org cascades to both ends of every relationship, and Postgres can run an immediate check mid-cascade. The service still pre-checks and names the blocking fields when a single object is deleted.
+
+## D-028 · Migrations listed statically
+- **Chose:** `packages/db/migrations/index.ts` lists every migration. Kysely's file-scanning provider uses a native `import()` that bypasses the test runner's module resolution, so migration 0003, which imports shared code, failed under Vitest while working under tsx.
+- **Rejected:** Keeping migrations free of imports. The User object definition would then be duplicated in two places that must agree.
+
+## Obligations carried to step 4 (records)
+Metadata changes were made safe for an org with no records. Once records exist, these must check or migrate data:
+- Making a field required or unique when existing records violate it.
+- Shortening a text field, or lowering precision, below existing values.
+- Renaming or deleting a picklist value that records use (Salesforce asks for a replacement value).
+- Deleting a record type that records use.
+- Adding a master-detail field to an object that already has records.
+- Auto number counters: `startingNumber` is stored; the counter itself belongs with records.
