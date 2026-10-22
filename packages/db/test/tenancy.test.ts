@@ -193,6 +193,21 @@ describe.skipIf(!adminUrl || !appUrl)("tenant isolation", () => {
     expect(still?.name).toBe("Admin");
   });
 
+  it("survives a pooled connection being killed by the server", async () => {
+    const errors: Error[] = [];
+    const pool = createDb(appUrl ?? "", { max: 1, onIdleError: (e) => errors.push(e) });
+    try {
+      const { rows } = await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(pool);
+      await sql`SELECT pg_terminate_backend(${rows[0]?.pid})`.execute(admin);
+      await new Promise((r) => setTimeout(r, 200));
+      expect(errors.length).toBe(1); // reported, not thrown
+      const again = await sql<{ ok: number }>`SELECT 1 AS ok`.execute(pool);
+      expect(again.rows[0]?.ok).toBe(1); // and the pool reconnects
+    } finally {
+      await pool.destroy();
+    }
+  });
+
   it("the org setting does not outlive its transaction on a pooled connection", async () => {
     const single = createDb(appUrl ?? "", { max: 1 });
     try {

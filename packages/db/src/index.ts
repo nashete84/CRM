@@ -144,7 +144,54 @@ export type RecordTypePicklistValueTable = {
   is_default: Generated<boolean>;
 };
 
+export type RecordTable = {
+  id: string;
+  org_id: string;
+  object_id: string;
+  name: string | null;
+  owner_id: string | null;
+  record_type_id: string | null;
+  data: ColumnType<Record<string, unknown>, string | undefined, string>;
+  is_deleted: Generated<boolean>;
+  deletion_id: string | null;
+  deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  deleted_by_id: string | null;
+  created_at: Timestamp;
+  created_by_id: string;
+  last_modified_at: Timestamp;
+  last_modified_by_id: string;
+  system_modstamp: Timestamp;
+  seq: ColumnType<string, never, never>;
+};
+
+export type RecordIndexTable = {
+  org_id: string;
+  field_id: string;
+  record_id: string;
+  value_key: string;
+  is_unique: boolean;
+  is_active: Generated<boolean>;
+};
+
+export type AutonumberCounterTable = {
+  field_id: string;
+  org_id: string;
+  next_value: ColumnType<string, number | string, number | string>;
+};
+
+export type RecycleClearedLookupTable = {
+  deletion_id: string;
+  org_id: string;
+  record_id: string;
+  field_id: string;
+  value: string;
+};
+
 export type Database = {
+  record: RecordTable;
+  record_index: RecordIndexTable;
+  autonumber_counter: AutonumberCounterTable;
+  recycle_cleared_lookup: RecycleClearedLookupTable;
   object_def: ObjectDefTable;
   field_def: FieldDefTable;
   picklist_value: PicklistValueTable;
@@ -161,8 +208,26 @@ export type Database = {
 export type Db = Kysely<Database>;
 export type Tx = Transaction<Database>;
 
-export function createDb(connectionString: string, options: { max?: number } = {}): Db {
+export type CreateDbOptions = {
+  max?: number;
+  /**
+   * Called when an idle pooled connection fails (database restart, failover,
+   * network drop). The pool has already discarded it; the next query opens a
+   * fresh one. Without a listener, Node would treat this as an uncaught error
+   * and exit the process.
+   */
+  onIdleError?: (err: Error) => void;
+};
+
+export function createDb(connectionString: string, options: CreateDbOptions = {}): Db {
   const pool = new pg.Pool({ connectionString, max: options.max ?? 10 });
+  pool.on(
+    "error",
+    options.onIdleError ??
+      ((err) => {
+        console.error(`[db] idle connection lost: ${err.message}`);
+      }),
+  );
   return new Kysely<Database>({ dialect: new PostgresDialect({ pool }) });
 }
 

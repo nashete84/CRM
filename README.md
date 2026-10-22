@@ -10,7 +10,8 @@ Built clean-room from public documentation. Design decisions and the alternative
 |---|---|
 | `apps/api` | Fastify HTTP API |
 | `packages/db` | Database connection, migrations (Kysely), tenant isolation helpers, record IDs |
-| `packages/metadata` | Metadata engine: objects, fields, picklists, record types, describe |
+| `packages/metadata` | Metadata engine: objects, fields, picklists, record types, describe, field value rules |
+| `packages/records` | Records: create, read, update, upsert, delete, undelete, purge |
 
 More packages arrive with their build steps: `sharing`, `soql`, then `apps/web`.
 
@@ -96,3 +97,24 @@ Database tests run when `DATABASE_URL` and `DATABASE_ADMIN_URL` are set and are 
 ## Tenant isolation
 
 Every tenant table has an `org_id` column and a row-level security policy. API code reaches tenant data only through `withOrg(db, orgId, fn)`, which scopes one transaction to one org; outside it every tenant table looks empty. A test fails if a new table with an `org_id` column lacks a policy. See DECISIONS.md D-015 to D-017.
+
+## Records
+
+Every record of every object lives in one `record` table; field values sit in JSONB keyed by field ID. Values are validated and normalised per field type, and the API shape follows Salesforce's REST API.
+
+```ts
+import { createRecord, deleteRecord, undeleteRecord, upsertRecord, getRecord } from "@crm/records";
+
+await withOrg(db, orgId, async (tx) => {
+  const ctx = { tx, orgId, userId };          // userId: who is acting (audit fields, default owner)
+  const { id } = await createRecord(ctx, "Invoice__c", { Client__c: clientId, Total__c: "1234.50" });
+  await upsertRecord(ctx, "Client__c", "Code__c", "ACME", { Name: "Acme Ltd" });  // by external ID
+  const result = await deleteRecord(ctx, "Client__c", clientId);   // children go to the recycle bin too
+  await undeleteRecord(ctx, "Client__c", clientId);                // and come back together
+  return getRecord(ctx, "Invoice__c", id);    // { attributes: { type, url }, Id, Name, ..., Total__c: 1234.5 }
+});
+```
+
+Errors are `RecordError` with Salesforce's per-record shape: `errors: [{ statusCode, message, fields }]`, for example `REQUIRED_FIELD_MISSING`, `DUPLICATE_VALUE`, `INVALID_CROSS_REFERENCE_KEY`, `DELETE_FAILED`.
+
+Records run in system mode: data rules are enforced, permissions and sharing are not yet (step 5).

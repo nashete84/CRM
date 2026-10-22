@@ -14,6 +14,12 @@ export type FieldRow = Omit<Selectable<FieldDefTable>, "type"> & { type: FieldTy
 export type PicklistRow = Selectable<PicklistValueTable>;
 export type RecordTypeRow = Selectable<RecordTypeTable>;
 
+export type ReferenceTarget = {
+  apiName: string;
+  keyPrefix: string;
+  storage: "record" | "platform";
+};
+
 /** A transaction already scoped to one org with withOrg(). */
 export type Ctx = { tx: Tx; orgId: string };
 
@@ -27,8 +33,8 @@ export type ObjectMeta = {
   recordTypeValues: Map<string, Map<string, { value: string; isDefault: boolean }[]>>;
   /** Relationship fields on other objects (or this one) that point here. */
   children: { field: FieldRow; childObject: string }[];
-  /** API names of the objects this object's relationship fields point to, by object id. */
-  referenceNames: Map<string, string>;
+  /** The objects this object's relationship fields point to, by object id. */
+  references: Map<string, ReferenceTarget>;
 };
 
 export async function findObject(ctx: Ctx, apiName: string): Promise<ObjectRow | undefined> {
@@ -139,11 +145,16 @@ export async function loadObjectMeta(ctx: Ctx, apiName: string): Promise<ObjectM
   const targets = targetIds.length
     ? await ctx.tx
         .selectFrom("object_def")
-        .select(["id", "api_name"])
+        .select(["id", "api_name", "key_prefix", "storage"])
         .where("id", "in", targetIds)
         .execute()
     : [];
-  const referenceNames = new Map(targets.map((t) => [t.id, t.api_name]));
+  const references = new Map(
+    targets.map((t) => [
+      t.id,
+      { apiName: t.api_name, keyPrefix: t.key_prefix, storage: t.storage },
+    ]),
+  );
 
   return {
     object,
@@ -152,6 +163,6 @@ export async function loadObjectMeta(ctx: Ctx, apiName: string): Promise<ObjectM
     recordTypes,
     recordTypeValues,
     children,
-    referenceNames,
+    references,
   };
 }

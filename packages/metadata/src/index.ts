@@ -6,7 +6,15 @@
 export { MetadataError, type MetadataErrorCode } from "./errors.js";
 export { FIELD_TYPES, type FieldType, type PicklistValueInput } from "./field-types.js";
 export { LIMITS } from "./limits.js";
-export type { Ctx, FieldRow, ObjectMeta, ObjectRow, RecordTypeRow } from "./model.js";
+export type {
+  Ctx,
+  FieldRow,
+  ObjectMeta,
+  ObjectRow,
+  PicklistRow,
+  RecordTypeRow,
+  ReferenceTarget,
+} from "./model.js";
 export { loadObjectMeta } from "./model.js";
 export {
   type CreateObjectInput,
@@ -48,3 +56,15 @@ export {
   describeObject,
   picklistValuesForRecordType,
 } from "./describe.js";
+export {
+  type StoredValue,
+  ValueError,
+  type ValueErrorCode,
+  apiDateTime,
+  formatAutoNumber,
+  indexKey,
+  isIndexed,
+  toApi,
+  toStored,
+} from "./values.js";
+export { canonicalDecimal, formatDecimal, parseDecimal, roundTo } from "./decimal.js";

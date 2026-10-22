@@ -1,0 +1,22 @@
+{
+  "name": "@crm/records",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@crm/db": "workspace:*",
+    "@crm/metadata": "workspace:*",
+    "kysely": "^0.27.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "vitest": "^2.1.8"
+  }
+}

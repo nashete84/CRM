@@ -250,13 +250,45 @@ export async function updateRecordType(
     .executeTakeFirstOrThrow();
 }
 
-/** Records that use the record type are handled from step 4. */
+/**
+ * Deletes a record type. Records that use it (including any in the recycle
+ * bin) must be moved to another active record type with `replaceWith`.
+ */
 export async function deleteRecordType(
   ctx: Ctx,
   objectApiName: string,
   developerName: string,
-): Promise<void> {
+  { replaceWith }: { replaceWith?: string } = {},
+): Promise<{ recordsChanged: number }> {
   const object = await getObject(ctx, objectApiName);
   const rt = await getRecordType(ctx, object, developerName);
+  const { n } = await ctx.tx
+    .selectFrom("record")
+    .select(sql<number>`count(*)::int`.as("n"))
+    .where("record_type_id", "=", rt.id)
+    .executeTakeFirstOrThrow();
+  if (n > 0) {
+    if (replaceWith === undefined) {
+      throw new MetadataError(
+        "FIELD_INTEGRITY_EXCEPTION",
+        `${n} record${n === 1 ? " uses" : "s use"} ${rt.developer_name}. Give replaceWith: another record type to move them to.`,
+        "replaceWith",
+      );
+    }
+    const target = await getRecordType(ctx, object, replaceWith);
+    if (target.id === rt.id || !target.is_active) {
+      throw new MetadataError(
+        "INVALID_FIELD",
+        "The replacement must be a different, active record type.",
+        "replaceWith",
+      );
+    }
+    await ctx.tx
+      .updateTable("record")
+      .set({ record_type_id: target.id })
+      .where("record_type_id", "=", rt.id)
+      .execute();
+  }
   await ctx.tx.deleteFrom("record_type").where("id", "=", rt.id).execute();
+  return { recordsChanged: n };
 }

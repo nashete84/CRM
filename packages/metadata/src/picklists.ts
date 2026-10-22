@@ -1,4 +1,5 @@
 import { sql } from "kysely";
+import { removePicklistValueFromRecords, renamePicklistValueInRecords } from "./data.js";
 import { MetadataError } from "./errors.js";
 import { type PicklistValueInput, TYPE_SPECS, parsePicklistValues } from "./field-types.js";
 import { insertPicklistValues } from "./fields.js";
@@ -170,6 +171,10 @@ export async function updatePicklistValue(
     .where("field_id", "=", field.id)
     .where("value", "=", row.value)
     .execute();
+  // Records keep up with a rename (record types follow through the foreign key).
+  if (changes.value !== undefined && changes.value !== row.value) {
+    await renamePicklistValueInRecords(ctx, field, row.value, changes.value);
+  }
   if (!active) {
     // An inactive value can't be a record type's default either.
     await ctx.tx
@@ -182,12 +187,18 @@ export async function updatePicklistValue(
 }
 
 /** Removes a value outright. Records that use it are handled from step 4. */
+/**
+ * Removes a value outright. Records that use it get `replaceWith` (an active
+ * value of the same field) or are cleared; a required field needs a replacement.
+ * Returns how many records were changed.
+ */
 export async function deletePicklistValue(
   ctx: Ctx,
   objectApiName: string,
   fieldApiName: string,
   value: string,
-): Promise<void> {
+  { replaceWith }: { replaceWith?: string } = {},
+): Promise<{ recordsChanged: number }> {
   const { field } = await picklistField(ctx, objectApiName, fieldApiName);
   const values = await currentValues(ctx, field.id);
   const row = findValue(values, value, field);
@@ -198,11 +209,25 @@ export async function deletePicklistValue(
       "value",
     );
   }
+  let replacement: string | undefined;
+  if (replaceWith !== undefined) {
+    const target = findValue(values, replaceWith, field);
+    if (target.value === row.value || !target.is_active) {
+      throw new MetadataError(
+        "INVALID_FIELD",
+        "The replacement must be a different, active value.",
+        "replaceWith",
+      );
+    }
+    replacement = target.value;
+  }
+  const recordsChanged = await removePicklistValueFromRecords(ctx, field, row.value, replacement);
   await ctx.tx
     .deleteFrom("picklist_value")
     .where("field_id", "=", field.id)
     .where("value", "=", row.value)
     .execute();
+  return { recordsChanged };
 }
 
 /** Moves values into the given order; values not listed keep their relative order after them. */

@@ -216,7 +216,7 @@ function describeField(
     d.defaultedOnCreate = values.some((v) => v.is_default);
   }
   if (f.reference_to) {
-    d.referenceTo = [meta.referenceNames.get(f.reference_to) ?? ""];
+    d.referenceTo = [meta.references.get(f.reference_to)?.apiName ?? ""];
     d.relationshipName = parentRelationshipName(f.api_name, f.is_custom);
     d.cascadeDelete = f.delete_constraint === "Cascade";
     d.restrictedDelete = f.delete_constraint === "Restrict";

@@ -144,10 +144,44 @@ Format: **Chose** / **Rejected (why)**. Newest at the bottom.
 - **Rejected:** Keeping migrations free of imports. The User object definition would then be duplicated in two places that must agree.
 
 ## Obligations carried to step 4 (records)
-Metadata changes were made safe for an org with no records. Once records exist, these must check or migrate data:
-- Making a field required or unique when existing records violate it.
-- Shortening a text field, or lowering precision, below existing values.
-- Renaming or deleting a picklist value that records use (Salesforce asks for a replacement value).
-- Deleting a record type that records use.
-- Adding a master-detail field to an object that already has records.
-- Auto number counters: `startingNumber` is stored; the counter itself belongs with records.
+All six are handled in step 4; see D-033.
+
+## D-029 · Records run in system mode until step 5
+- **Chose:** `@crm/records` enforces data rules (types, required, unique, lookups, record types, owners) but not permissions. It takes the acting user only for audit fields and default ownership. Step 5 wraps it with object permissions, field-level security and sharing; nothing outside the platform calls it before then, and there are still no HTTP endpoints.
+- **Rejected:** Building permission checks into the write path now. They depend on profiles and sharing, which don't exist yet, and would have to be rewritten.
+
+## D-030 · Stored value formats
+- **Chose:** Values in `record.data` are JSON strings, except checkbox (boolean). Numbers, currency and percent are exact decimal strings with the field's scale ("1234.50"), parsed with BigInt arithmetic and rounded half away from zero, as Salesforce does. Date-times are stored in UTC and returned as `2026-10-22T08:00:00.000+0000`. Multi-select values are stored as "A;B" in picklist order. Empty values are never stored, so "has a value" is just "key present".
+- **Rejected:** JSON numbers (binary doubles lose digits past ~15, and currency allows 18). A Postgres `numeric` column per field (one column per field is what D-004 rejected).
+
+## D-031 · record_index
+- **Chose:** Unique fields, external IDs and every lookup and master-detail value are mirrored into `record_index` with a normalised key (lower-cased for case-insensitive text and email, canonical decimals, 18-character IDs). A partial unique index on (field, key) for active rows enforces uniqueness even under concurrent writes; the app pre-checks only to give a friendly message. Lookups in the index let deletes find children without scanning JSON.
+- **Rejected:** A JSONB expression index per field (D-004). Uniqueness checked only in app code (two concurrent saves would both pass; a test proves the database stops the second).
+
+## D-032 · Recycle bin and delete rules
+- **Chose:** Deleting is soft. Master-detail children go with their master down every level. A Restrict lookup from a surviving record blocks the delete and names the blockers; a SetNull lookup is cleared and logged. Everything deleted together shares a `deletion_id`. Only the record the user deleted can be undeleted, bringing its children back and restoring cleared lookups unless someone has set them since. Records in the bin don't hold unique values; undelete fails if a value has been taken. `purgeDeleted` removes whole groups, by ID or older than N days (Salesforce keeps 15).
+- **Rejected:** Hard delete with database cascades. No undelete, and SetNull can't be reversed.
+- **Not yet:** Nothing calls `purgeDeleted` on a schedule. That's a job to set up when the API is deployed.
+
+## D-033 · Schema changes never invalidate or silently lose data
+- **Chose:** Where Salesforce would truncate, round or leave invalid data behind, this platform refuses the change and says how many records are in the way:
+  - Making a field required, or adding a required field, while records lack a value.
+  - Making a field unique (or case-insensitive) while live records share a value.
+  - Shortening text, or reducing precision or scale, below an existing value. A safe scale change reformats stored values.
+  - Restricting a picklist while records hold values outside it.
+  - Adding a master-detail field to an object that has records.
+- **Applied to the data:**
+  - Picklist renames update records, including multi-select.
+  - Deleting a picklist value takes a replacement, or clears it; a required field must have a replacement.
+  - Deleting a record type in use needs a replacement record type, counting records in the recycle bin.
+  - New auto number fields, and a Name field switched to auto number, number existing records oldest first.
+  - A new checkbox with a true default is set on existing records.
+  - Deleting a field removes its values; deleting an object deletes its records.
+- **Rejected:** Matching Salesforce's warn-and-truncate behaviour. Silent data loss is worse than an extra step.
+
+## D-034 · Auto numbers
+- **Chose:** One counter row per field, incremented with `INSERT ... ON CONFLICT DO UPDATE ... RETURNING`; the row lock makes concurrent inserts take turns, so numbers are distinct and gap-free while transactions commit (a test runs 20 at once). Changing the starting number sets the next value. `{YYYY}`, `{MM}`, `{DD}` use UTC; org time zones arrive with org settings.
+- **Rejected:** A Postgres sequence per field (DDL per field, and sequences skip numbers on rollback).
+
+## D-035 · Pool errors must not crash the process
+- **Chose:** `createDb` always attaches a pool `error` listener. When the database restarts or fails over, idle connections die and `pg` emits `error`; with no listener Node exits. Found when the migration test dropped its scratch database; a test now kills a pooled connection and checks the pool reports it and reconnects.

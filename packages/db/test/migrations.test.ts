@@ -22,7 +22,11 @@ describe.skipIf(!adminUrl || !appUrl)("migrations", () => {
   beforeAll(async () => {
     await sql.raw(`CREATE DATABASE ${scratchName}`).execute(admin);
     await sql.raw(`GRANT CONNECT ON DATABASE ${scratchName} TO crm_app`).execute(admin);
-    scratch = createDb(withDatabase(adminUrl ?? "", scratchName), { max: 1 });
+    // Dropping the scratch database cuts this pool's connection; that's expected.
+    scratch = createDb(withDatabase(adminUrl ?? "", scratchName), {
+      max: 1,
+      onIdleError: () => {},
+    });
   });
 
   afterAll(async () => {

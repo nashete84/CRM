@@ -1,5 +1,18 @@
 import { KeyPrefix, newId } from "@crm/db";
 import { sql } from "kysely";
+import {
+  backfillAutoNumbers,
+  checkCanRequire,
+  checkNoRecords,
+  checkNumbersFit,
+  checkTextFits,
+  checkValuesInPicklist,
+  fillValue,
+  rebuildIndex,
+  recordCount,
+  reformatNumbers,
+  stripField,
+} from "./data.js";
 import { MetadataError, isUniqueViolation } from "./errors.js";
 import {
   type FieldType,
@@ -481,6 +494,21 @@ export async function createField(
     throw new MetadataError("INVALID_FIELD", "values applies only to picklist fields.", "values");
   }
 
+  // Existing records must be valid with the new field (D-033).
+  if (type === "MasterDetail") {
+    await checkNoRecords(
+      ctx,
+      object,
+      "A master-detail field can only be added while the object has no records, because every record needs a master.",
+    );
+  } else if (required && (await recordCount(ctx, object.id, false)) > 0) {
+    throw new MetadataError(
+      "FIELD_INTEGRITY_EXCEPTION",
+      `${object.api_name} already has records, which would have no ${label}. Create the field as optional, fill it in, then make it required.`,
+      "required",
+    );
+  }
+
   try {
     const field = (await ctx.tx
       .insertInto("field_def")
@@ -507,6 +535,9 @@ export async function createField(
       .returningAll()
       .executeTakeFirstOrThrow()) as FieldRow;
     await insertPicklistValues(ctx, object, field.id, values, 0, true);
+    if (type === "AutoNumber") await backfillAutoNumbers(ctx, field);
+    if (type === "Checkbox" && props.defaultValue === true) await fillValue(ctx, field, true);
+    if (type === "AutoNumber" && externalId) await rebuildIndex(ctx, field);
     if (type === "MasterDetail") {
       await ctx.tx
         .updateTable("object_def")
@@ -720,8 +751,43 @@ export async function updateField(
   }
 
   if (Object.keys(changes).length === 0) return field;
+
+  // Existing records must still be valid after the change (D-033).
+  const oldProps = field.props as Record<string, unknown>;
+  if (required && !field.required && !field.is_name_field) await checkCanRequire(ctx, field);
+  if (type === field.type) {
+    if (
+      (type === "Text" || type === "LongTextArea") &&
+      Number(props.length) < Number(oldProps.length)
+    ) {
+      await checkTextFits(ctx, field, Number(props.length));
+    }
+    const numeric = type === "Number" || type === "Currency" || type === "Percent";
+    const precisionChanged =
+      numeric && (props.precision !== oldProps.precision || props.scale !== oldProps.scale);
+    if (precisionChanged)
+      await checkNumbersFit(ctx, field, Number(props.precision), Number(props.scale));
+    if (
+      (type === "Picklist" || type === "MultiselectPicklist") &&
+      props.restricted === true &&
+      oldProps.restricted !== true
+    ) {
+      const values = await ctx.tx
+        .selectFrom("picklist_value")
+        .select("value")
+        .where("field_id", "=", field.id)
+        .execute();
+      await checkValuesInPicklist(
+        ctx,
+        field,
+        values.map((v) => v.value),
+      );
+    }
+  }
+
+  let updated: FieldRow;
   try {
-    return (await ctx.tx
+    updated = (await ctx.tx
       .updateTable("field_def")
       .set({ ...changes, updated_at: sql`now()` })
       .where("id", "=", field.id)
@@ -737,6 +803,32 @@ export async function updateField(
     }
     throw err;
   }
+
+  const indexSettingsChanged =
+    unique !== field.is_unique ||
+    externalId !== field.is_external_id ||
+    (props.caseSensitive ?? false) !== (oldProps.caseSensitive ?? false);
+  if (indexSettingsChanged) await rebuildIndex(ctx, updated);
+  if (
+    type === field.type &&
+    (type === "Number" || type === "Currency" || type === "Percent") &&
+    props.scale !== oldProps.scale
+  ) {
+    await reformatNumbers(ctx, updated, Number(props.scale));
+  }
+  if (type === "AutoNumber" && field.type !== "AutoNumber") {
+    await backfillAutoNumbers(ctx, updated);
+  } else if (type === "AutoNumber" && props.startingNumber !== oldProps.startingNumber) {
+    // The next record gets the new starting number.
+    await ctx.tx
+      .insertInto("autonumber_counter")
+      .values({ field_id: field.id, org_id: ctx.orgId, next_value: Number(props.startingNumber) })
+      .onConflict((oc) =>
+        oc.column("field_id").doUpdateSet({ next_value: Number(props.startingNumber) }),
+      )
+      .execute();
+  }
+  return updated;
 }
 
 export async function deleteField(
@@ -758,6 +850,8 @@ export async function deleteField(
       `${field.api_name} is a standard field and can't be deleted.`,
     );
   }
+  // Values go with the field; index rows and counters cascade.
+  await stripField(ctx, field);
   await ctx.tx.deleteFrom("field_def").where("id", "=", field.id).execute();
   if (field.type === "MasterDetail" && (await countFields(ctx, object.id, "masterDetail")) === 0) {
     // No parent controls sharing any more; fall back to the open default.
