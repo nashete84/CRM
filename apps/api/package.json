@@ -7,16 +7,21 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "cli": "tsx src/cli.ts"
   },
   "dependencies": {
     "@crm/db": "workspace:*",
+    "@fastify/cookie": "^11.1.3",
+    "@fastify/rate-limit": "^10.3.0",
     "fastify": "^5.1.0",
     "kysely": "^0.27.5",
+    "openid-client": "^6.8.8",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "oauth2-mock-server": "^7.2.1",
     "tsx": "^4.19.2",
     "vitest": "^2.1.8"
   }

@@ -4,7 +4,7 @@ import { loadConfig } from "./config.js";
 
 const config = loadConfig();
 const db = createDb(config.DATABASE_URL);
-const app = buildApp({ db, logLevel: config.LOG_LEVEL });
+const app = await buildApp({ db, config });
 
 async function shutdown(signal: string): Promise<void> {
   app.log.info({ signal }, "shutting down");

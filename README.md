@@ -27,6 +27,36 @@ pnpm dev                      # API on http://localhost:3000
 curl localhost:3000/health/ready
 ```
 
+## Provision an org
+
+There is no self-signup. Create an org and its first user with the admin CLI:
+
+```sh
+pnpm --filter @crm/api cli create-org --name "Acme UK" --slug acme-uk \
+  --admin-email ana@acme.test --admin-name "Ana Ruiz"
+
+# Development sign-in (needs ALLOW_LOCAL_LOGIN=true)
+CRM_PASSWORD='at least twelve characters' \
+  pnpm --filter @crm/api cli set-password --org acme-uk --email ana@acme.test
+
+# Single sign-on: register the org's identity provider
+pnpm --filter @crm/api cli add-idp --org acme-uk --name Entra \
+  --issuer https://login.microsoftonline.com/<tenant>/v2.0 \
+  --client-id <client id> --secret-env ACME_ENTRA_SECRET
+```
+
+Users then sign in at `/auth/<org slug>/oidc/<provider id>`. Register `APP_ORIGIN/auth/oidc/callback` as the redirect URI at the identity provider.
+
+## Auth endpoints
+
+| Method | Path | What it does |
+|---|---|---|
+| POST | `/auth/login` | Email + password sign-in (development only). Returns a bearer token and sets the session cookie. |
+| GET | `/auth/:org/oidc/:provider` | Starts single sign-on with an org's identity provider. |
+| GET | `/auth/oidc/callback` | Identity provider redirects here. Starts the session. |
+| GET | `/auth/me` | The signed-in user and their org. |
+| POST | `/auth/logout` | Ends the current session. |
+
 ## Checks
 
 ```sh
@@ -38,4 +68,8 @@ Database tests run when `DATABASE_URL` and `DATABASE_ADMIN_URL` are set and are 
 ## Database roles
 
 - `crm_owner` owns the schema and runs migrations. The API never uses it.
-- `crm_app` is what the API connects as. It is not a superuser and cannot bypass row-level security, so tenant isolation (step 2) applies to every query the API makes.
+- `crm_app` is what the API connects as. It is not a superuser and cannot bypass row-level security, so tenant isolation applies to every query the API makes.
+
+## Tenant isolation
+
+Every tenant table has an `org_id` column and a row-level security policy. API code reaches tenant data only through `withOrg(db, orgId, fn)`, which scopes one transaction to one org; outside it every tenant table looks empty. A test fails if a new table with an `org_id` column lacks a policy. See DECISIONS.md D-015 to D-017.

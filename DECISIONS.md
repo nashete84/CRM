@@ -78,3 +78,40 @@ Format: **Chose** / **Rejected (why)**. Newest at the bottom.
 ## D-013 · Health endpoints split
 - **Chose:** `/health/live` (process up, no dependencies) and `/health/ready` (database reachable, else 503).
 - **Rejected:** A single `/health` that checks the database. An orchestrator would restart healthy API processes during a database blip.
+
+## D-014 · Salesforce-compatible record IDs
+- **Chose:** 18-character IDs everywhere: 3-character key prefix (`00D` org, `005` user, `0SO` auth provider), 12 random base62 characters from the CSPRNG, and the 3-character case-checksum suffix. Accept 15-character IDs on input, always emit 18. Each table also has a CHECK constraint on its prefix.
+- **Rejected:** UUIDs (breaks answer #7: exports would not map 1:1 to Salesforce shapes). Sequential IDs (leak record counts and creation order between users).
+
+## D-015 · Tenant isolation mechanics
+- **Chose:** One `withOrg(db, orgId, fn)` helper opens a transaction and sets `app.org_id` with `set_config(..., true)`, which is transaction-local, so it cannot leak to the next request on a pooled connection. Every policy compares against `app_org_id()`, which returns NULL when unset, so a query outside `withOrg` sees nothing. Cross-tenant references are composite `(org_id, id)` foreign keys.
+- **Rejected:** `SET app.org_id` at session level (survives on pooled connections, the classic RLS leak). Filtering only in application code (one forgotten `where` leaks data).
+- **Known limit:** the app role can call `set_config` itself, so a SQL injection could switch orgs. All queries are parameterised through Kysely; raw SQL must use the `sql` tag, never string concatenation.
+
+## D-016 · RLS enabled, not forced
+- **Chose:** `ENABLE ROW LEVEL SECURITY` without `FORCE`. Table owners bypass non-forced RLS, and the owner role is used only by migrations and two audited functions (D-017). A test asserts that `crm_app` owns no table.
+- **Rejected:** `FORCE ROW LEVEL SECURITY`. It would also bind the owner, so the two lookups that must work before an org is known would need a separate BYPASSRLS role, which managed Postgres services often don't allow.
+
+## D-017 · The only two cross-org lookups
+- **Chose:** `SECURITY DEFINER` functions with a pinned `search_path`, executable only by `crm_app`: `auth_resolve_org(slug)` returns an org id, and `auth_resolve_session(token_hash, idle)` returns org and user for a live session of an active user. Nothing else in the API can read across orgs.
+- **Rejected:** A global `users` table keyed by email for sign-in (a person can belong to more than one business unit, and it would be a cross-org read path in normal code).
+
+## D-018 · Sessions
+- **Chose:** Opaque random tokens (256 bits). Only the SHA-256 hash is stored. 12-hour absolute and 2-hour idle expiry, `last_seen_at` written at most once a minute. Browsers get an `HttpOnly`, `SameSite=Lax` cookie (`__Host-` prefixed over https); API clients use `Authorization: Bearer`. Deactivating a user ends their sessions immediately.
+- **Rejected:** JWT sessions. They can't be revoked before expiry without a server-side list, which is a session table anyway.
+
+## D-019 · Cross-site request forgery
+- **Chose:** Unsafe methods (POST, PUT, PATCH, DELETE) are refused when the `Origin` header names another site, and cookie-authenticated unsafe requests must carry an `Origin`. Bearer requests are exempt because browsers never attach them automatically.
+- **Rejected:** CSRF tokens. All supported browsers send `Origin` on unsafe requests, so a token adds state and a round trip for no extra protection. Revisit if the API is ever embedded cross-origin (that needs CORS anyway).
+
+## D-020 · OIDC sign-in
+- **Chose:** Authorization code flow with PKCE (S256), state and nonce, via `openid-client` v6. The browser carries login state in a signed, `HttpOnly`, 10-minute cookie scoped to `/auth/oidc`. Returning users are matched only by `(provider, subject)`. Email matching happens once, on first sign-in, and only when the org enabled `allow_email_linking` for that provider and the IdP sent `email_verified: true`. A user can hold one identity per provider. Users are never created on sign-in; administrators provision them.
+- **Rejected:** Matching by email on every sign-in (an IdP that lets users change their email becomes an account-takeover path). Just-in-time user creation (anyone in the IdP tenant would get a CRM user without a profile or role).
+- **Known limit:** discovery documents and client secrets are cached until the process restarts, so a rotated client secret needs a restart.
+
+## D-021 · Local passwords (development only)
+- **Chose:** scrypt (N=2^17, r=8, p=1) with parameters stored in the hash. Every failure (unknown org, unknown email, wrong password, deactivated user, no password set) returns the same message after one scrypt computation, so neither the message nor the timing reveals which. Rate limited per client address (`LOGIN_RATE_LIMIT_PER_MINUTE`, default 10). The route doesn't exist unless `ALLOW_LOCAL_LOGIN=true`, and config refuses that in production.
+- **Rejected:** bcrypt (72-byte input limit). Argon2 (needs a native module; scrypt is in Node's standard library).
+
+## D-022 · Error responses
+- **Chose:** Salesforce-style bodies `{ errorCode, message }` (`INVALID_SESSION_ID`, `INVALID_LOGIN`). Anything that would be a 5xx returns `UNKNOWN_EXCEPTION` with a generic message; the detail goes only to the log. Authorization headers and cookies are redacted from logs.
